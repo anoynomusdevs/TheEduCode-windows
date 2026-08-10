@@ -7,7 +7,6 @@ dist/
 build/
 *.exe
 *.jsc
-*.dll
 *.so
 *.dylib
 *.iso
