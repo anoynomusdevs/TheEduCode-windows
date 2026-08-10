@@ -59,42 +59,25 @@ async function runJS(userWrittenCode, sampleInputOutput) {
         const diff = process.hrtime(startTime);
         const timeInSeconds = (diff[0] + diff[1] / 1e9).toFixed(3);
         const userOutput = stdoutBuffer.trim();
-
-        let statusId = 3; // Accepted
-        let statusDescription = "Accepted";
-
-        if (executionError) {
-            if (executionError.includes('Time Limit Exceeded')) {
-                statusId = 5;
-                statusDescription = "Time Limit Exceeded";
-            } else if (executionError.includes('SyntaxError')) {
-                statusId = 6;
-                statusDescription = "Compilation Error";
-            } else {
-                statusId = 12;
-                statusDescription = "Runtime Error (NZEC)";
-            }
-        } else if (userOutput !== expectedOutput.trim()) {
-            statusId = 4;
-            statusDescription = "Wrong Answer";
-        }
+        const testCasePassed = userOutput === expectedOutput.trim() && !executionError;
 
         results.push({
-            [`testCase${i + 1}`]: {
-                input,
-                expectedOutput: expectedOutput.trim(),
-                userOutput,
-                testCasePassed: statusId === 3,
-                compilerMessage: executionError || null,
-                time: timeInSeconds,
-                memory: Math.floor(Math.random() * 1024 + 1024),
-                statusId,
-                statusDescription
-            }
+            run_success: testCasePassed,
+            run_error: executionError || (testCasePassed ? "" : "Wrong Answer"),
+            stdout: stdoutBuffer,
+            stderr: stderrBuffer
         });
     }
-
-    return results;
+    
+    return {
+        compile_success: true,
+        compile_error: "",
+        run_success: results.every(r => r.run_success),
+        run_error: results.find(r => !r.run_success)?.run_error || "",
+        stdout: results[0]?.stdout || "",
+        stderr: results[0]?.stderr || "",
+        results
+    };
 }
 
 module.exports = { runJS };

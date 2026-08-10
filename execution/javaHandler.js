@@ -59,20 +59,15 @@ async function runJava(userWrittenCode, sampleInputOutput, files) {
 
     if (compileResult.code !== 0) {
         try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
-        const errResults = sampleInputOutput.map((io, i) => ({
-            [`testCase${i + 1}`]: {
-                input: io[0],
-                expectedOutput: io[1].trim(),
-                userOutput: "",
-                testCasePassed: false,
-                compilerMessage: compileResult.stderr,
-                time: "0.000",
-                memory: 0,
-                statusId: 6,
-                statusDescription: "Compilation Error"
-            }
-        }));
-        return errResults;
+        return {
+            compile_success: false,
+            compile_error: compileResult.stderr,
+            run_success: false,
+            run_error: "",
+            stdout: "",
+            stderr: "",
+            results: []
+        };
     }
 
     // 2. Execution Phase
@@ -123,37 +118,27 @@ async function runJava(userWrittenCode, sampleInputOutput, files) {
         const timeInSeconds = (diff[0] + diff[1] / 1e9).toFixed(3);
         const userOutput = stdoutBuffer.trim();
 
-        let statusId = 3;
-        let statusDescription = "Accepted";
-
-        if (isTimeout) {
-            statusId = 5;
-            statusDescription = "Time Limit Exceeded";
-        } else if (executionError) {
-            statusId = 12;
-            statusDescription = "Runtime Error (NZEC)";
-        } else if (userOutput !== expectedOutput.trim()) {
-            statusId = 4;
-            statusDescription = "Wrong Answer";
-        }
+        const testCasePassed = userOutput === expectedOutput.trim() && !executionError;
 
         results.push({
-            [`testCase${i + 1}`]: {
-                input,
-                expectedOutput: expectedOutput.trim(),
-                userOutput,
-                testCasePassed: statusId === 3,
-                compilerMessage: statusId === 12 ? (stderrBuffer || executionError) : null,
-                time: timeInSeconds,
-                memory: Math.floor(Math.random() * 4096 + 4096),
-                statusId,
-                statusDescription
-            }
+            run_success: testCasePassed,
+            run_error: executionError || (testCasePassed ? "" : "Wrong Answer"),
+            stdout: stdoutBuffer,
+            stderr: stderrBuffer
         });
     }
 
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
-    return results;
+    
+    return {
+        compile_success: true,
+        compile_error: "",
+        run_success: results.every(r => r.run_success),
+        run_error: results.find(r => !r.run_success)?.run_error || "",
+        stdout: results[0]?.stdout || "",
+        stderr: results[0]?.stderr || "",
+        results
+    };
 }
 
 module.exports = { runJava };

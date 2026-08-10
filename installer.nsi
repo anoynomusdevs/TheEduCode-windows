@@ -13,7 +13,7 @@ SetCompressor bzip2
 !define COMPANYNAME "Eduniketan Private Limited"
 !define DESCRIPTION "Electron-based TheEduCode Kiosk Browser"
 !define VERSION "1.5.0"
-!define INSTALLDIR "$PROGRAMFILES64/TheEduCode"
+!define INSTALLDIR "$PROGRAMFILES64\TheEduCode"
 
 Name "${APPNAME}"
 OutFile "TheEduCode-Setup-Slim.exe"
@@ -61,6 +61,7 @@ Enjoy a secure, fast, and beautiful kiosk experience."
 Section "Install"
 
   SetDetailsPrint none
+  SetShellVarContext all
 
   ; Silently terminate any running instances to avoid write-lock errors
   nsExec::Exec 'taskkill /F /IM TheEduCode.exe'
@@ -74,11 +75,12 @@ Section "Install"
   nsExec::Exec 'powershell -NoProfile -Command "Add-MpPreference -ExclusionPath \"$INSTDIR\""'
 
   SetOutPath "$INSTDIR"
-  File /r "dist/TheEduCode-win32-x64/*"
+  File /r "dist\TheEduCode-win32-x64\*"
 
   ; Place executables in resources
-  SetOutPath "$INSTDIR/resources"
-  File "theeducode-updater.exe"
+  SetOutPath "$INSTDIR\resources"
+  ; File "theeducode-updater.exe"
+  File "process_killer.exe"
   File "Microsoft.Web.WebView2.Core.dll"
   File "Microsoft.Web.WebView2.WinForms.dll"
   File "WebView2Loader.dll"
@@ -88,7 +90,12 @@ Section "Install"
 
   ; Desktop shortcut
   SetOutPath "$INSTDIR"
-  CreateShortcut "$DESKTOP\TheEduCode.lnk" "$INSTDIR\TheEduCode.exe" "" "$INSTDIR\resources\icon.ico" 0
+  CreateShortcut "$DESKTOP\TheEduCode.lnk" "$INSTDIR\TheEduCode.exe"
+
+  ; Start Menu shortcut
+  CreateDirectory "$SMPROGRAMS\${APPNAME}"
+  CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\TheEduCode.exe"
+  CreateShortcut "$SMPROGRAMS\${APPNAME}\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
 
   ; Registry uninstall info
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" \
@@ -118,6 +125,7 @@ SectionEnd
 Section "Uninstall"
 
   SetDetailsPrint none
+  SetShellVarContext all
 
   ; Silently terminate any running instances before uninstalling
   nsExec::Exec 'taskkill /F /IM TheEduCode.exe'
@@ -125,6 +133,7 @@ Section "Uninstall"
   nsExec::Exec 'taskkill /F /IM theeducode-updater.exe'
 
   Delete "$DESKTOP\TheEduCode.lnk"
+  RMDir /r "$SMPROGRAMS\${APPNAME}"
   RMDir /r "$INSTDIR"
 
   ; Remove registry entries

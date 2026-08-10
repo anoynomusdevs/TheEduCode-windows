@@ -10,33 +10,9 @@
 
     <script>
         const { ipcRenderer } = require('electron');
-        let pythonWorker = null;
-
-        function initPythonWorker() {
-            pythonWorker = new Worker('workers/python.worker.js');
-            pythonWorker.postMessage({ type: 'init', pyodidePath: '../lib/pyodide.js' });
-
-            pythonWorker.onmessage = (e) => {
-                if (e.data.type === 'ready') {
-                    document.getElementById('status').textContent = 'Pyodide Context Ready.';
-                } else if (e.data.type === 'result') {
-                    ipcRenderer.send('python-result', e.data);
-                }
-            };
-        }
-
-        ipcRenderer.on('run-python', (event, payload) => {
-            if (pythonWorker) {
-                pythonWorker.postMessage({
-                    type: 'run',
-                    id: payload.id,
-                    code: payload.code,
-                    sampleInputOutput: payload.sampleInputOutput
-                });
-            }
-        });
-
-        window.onload = initPythonWorker;
+        // Engine HTML is now only used as a background process for rendering/offloading 
+        // tasks if necessary, or for future WebAssembly tools.
+        // Python has been migrated to a native execution handler (pythonHandler.js).
     </script>
 </body>
 </html>

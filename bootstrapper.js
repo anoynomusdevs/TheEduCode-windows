@@ -29,14 +29,14 @@ const ASSETS = [
         validationFile: 'blazeface.json'
     },
     {
-        name: 'pyodide.zip',
-        url: `${GITHUB_RELEASE_BASE}/pyodide.zip`,
-        destDir: () => path.join(getAppDir(), 'execution'),
-        destName: 'lib',
+        name: 'compilers-python-3.11.zip',
+        url: `${GITHUB_RELEASE_BASE}/compilers-python-3.11.zip`,
+        destDir: () => path.join(getCompilersDir(), 'win'),
+        destName: 'python',
         isZip: true,
-        label: 'Python Engine (Pyodide)',
+        label: 'Python Engine (Python 3.11)',
         sizeMB: 5,
-        validationFile: 'pyodide.asm.wasm'
+        validationFile: 'python.exe'
     },
     {
         name: 'compilers-gcc-14.1.0.zip',

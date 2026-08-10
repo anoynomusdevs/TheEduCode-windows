@@ -4,71 +4,31 @@ const fs = require('fs');
 const { app } = require('electron');
 
 /**
- * C and C++ Local Compiler Runner utilizing GCC MinGW-w64.
- * Language IDs: 50 (C), 54 (C++)
+ * Python Local Compiler Runner.
+ * Language ID: 71 (Python)
  */
-async function runCpp(userWrittenCode, languageId, sampleInputOutput) {
+async function runPython(userWrittenCode, sampleInputOutput) {
     const isWindows = process.platform === 'win32';
     const basePath = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
     
     let compilerRelPath;
-    const type = languageId === 50 ? 'c' : 'cpp';
-
     if (isWindows) {
-        compilerRelPath = type === 'c' ? 'compilers/win/mingw64/bin/gcc.exe' : 'compilers/win/mingw64/bin/g++.exe';
-    } else if (process.platform === 'darwin') {
-        compilerRelPath = type === 'c' ? 'compilers/mac/clang/bin/clang' : 'compilers/mac/clang/bin/clang++';
+        compilerRelPath = 'compilers/win/python/python.exe';
     } else {
-        compilerRelPath = type === 'c' ? 'compilers/linux/gcc' : 'compilers/linux/g++';
+        compilerRelPath = 'python3';
     }
 
-    let compilerPath = path.join(basePath, compilerRelPath);
-    if (!fs.existsSync(compilerPath)) {
-        // Fallback to system gcc/g++ if packaged binary isn't present
-        compilerPath = type === 'c' ? 'gcc' : 'g++';
+    let pythonPath = path.join(basePath, compilerRelPath);
+    if (!fs.existsSync(pythonPath) && isWindows) {
+        pythonPath = 'python'; // fallback to system python
     }
 
-    const tempDir = path.join(app.getPath('temp'), `educode_cpp_${Date.now()}`);
+    const tempDir = path.join(app.getPath('temp'), `educode_python_${Date.now()}`);
     fs.mkdirSync(tempDir, { recursive: true });
 
-    const fileExt = type === 'c' ? '.c' : '.cpp';
-    const sourcePath = path.join(tempDir, `main${fileExt}`);
-    const binaryName = isWindows ? 'main.exe' : 'main';
-    const binaryPath = path.join(tempDir, binaryName);
-
+    const sourcePath = path.join(tempDir, 'main.py');
     fs.writeFileSync(sourcePath, userWrittenCode, 'utf8');
 
-    // 1. Compile Phase
-    const compileResult = await new Promise((resolve) => {
-        const compileArgs = [sourcePath, '-o', binaryPath];
-        if (type === 'cpp') compileArgs.push('-std=c++17');
-
-        const compilerDir = path.dirname(compilerPath);
-        const env = Object.assign({}, process.env);
-        env.PATH = `${compilerDir}${path.delimiter}${env.PATH}`;
-
-        const child = spawn(compilerPath, compileArgs, { cwd: tempDir, env });
-        let stderr = '';
-
-        child.stderr.on('data', (d) => { stderr += d.toString(); });
-        child.on('error', (err) => resolve({ code: 1, stderr: err.message }));
-        child.on('close', (code) => resolve({ code, stderr }));
-    });
-
-    if (compileResult.code !== 0) {
-        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
-        return {
-            compile_success: false,
-            compile_error: compileResult.stderr,
-            run_success: false,
-            run_error: "",
-            stdout: "",
-            stderr: "",
-            results: []
-        };
-    }
-
-    // 2. Execution Phase over Test Cases
     const results = [];
     for (let i = 0; i < sampleInputOutput.length; i++) {
         const [input, expectedOutput] = sampleInputOutput[i];
@@ -80,7 +40,7 @@ async function runCpp(userWrittenCode, languageId, sampleInputOutput) {
         const startTime = process.hrtime();
 
         await new Promise((resolve) => {
-            const runner = spawn(binaryPath, [], { cwd: tempDir });
+            const runner = spawn(pythonPath, [sourcePath], { cwd: tempDir });
 
             const timer = setTimeout(() => {
                 isTimeout = true;
@@ -105,7 +65,11 @@ async function runCpp(userWrittenCode, languageId, sampleInputOutput) {
             runner.on('close', (code) => {
                 clearTimeout(timer);
                 if (code !== 0 && !isTimeout) {
-                    executionError = `Process exited with code ${code}\n${stderrBuffer}`;
+                    if (stderrBuffer.includes('SyntaxError')) {
+                        executionError = `SyntaxError\n${stderrBuffer}`;
+                    } else {
+                        executionError = `Process exited with code ${code}\n${stderrBuffer}`;
+                    }
                 }
                 resolve();
             });
@@ -125,7 +89,6 @@ async function runCpp(userWrittenCode, languageId, sampleInputOutput) {
         });
     }
 
-    // Cleanup temp files
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
     
     return {
@@ -139,4 +102,4 @@ async function runCpp(userWrittenCode, languageId, sampleInputOutput) {
     };
 }
 
-module.exports = { runCpp };
+module.exports = { runPython };

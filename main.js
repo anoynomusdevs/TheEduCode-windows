@@ -25,7 +25,10 @@ const { runBootstrap } = require('./bootstrapper');
 let sessionKey;
 
 
-const URL_TO_OPEN = 'https://obaz8ndujtjb.theeducode.com/student/dashboard'; // Change this to your desired URL
+// const URL_TO_OPEN = 'https://obaz8ndujtjb.theeducode.com/student/dashboard'; // Change this to your desired URL
+// const URL_TO_OPEN = 'https://frontend-tau-six-58.vercel.app/student/login'; // Change this to your desired URL
+const URL_TO_OPEN = 'https://befnasa.theeducode.com/student/login'; 
+// const URL_TO_OPEN = 'file://' + require('path').join(__dirname, 'test-compiler.html'); // Offline compiler test
 // const URL_TO_OPEN = 'http://localhost:3000/student/dashboard'; // For local frontend testing
 // const URL_TO_OPEN = 'file://' + require('path').join(__dirname, 'test-ipc.html'); // For local IPC validation
 let killerProcess;
@@ -262,11 +265,11 @@ function getChecksum(filePath, algorithm = 'sha256') {
 // ✅ File Integrity Verification
 async function verifyFileIntegrity() {
     const checksums = {
-        // 'process_killer.exe': 'e5cdd086d22d35836a66f2fd112c8734513e87a387f3701855489ca2eb81d8a4',
+        'process_killer.exe': 'e5cdd086d22d35836a66f2fd112c8734513e87a387f3701855489ca2eb81d8a4',
         'index.html': '16bbb20b9c85de5ba618c1fe5cb6f321589eb5d0aeb94ca54ef53f8b26503ec2',
-        'package.json': 'eecdc3856db574101d58bca2a2c77e0317234a84c83ea05a17e19a72e602a6f2',
-        'webviewPreload.js': 'c8e00155eaf8aa7651bdd089849a78d1510e11cfa444d392772807de7a871085',
-        'main.loader.js': '6944c5a4973dbabc73b44b4a27f1dc7ba148094e741cc9cf637dc6d3c5a3fb6d'
+        'package.json': 'cef3421dfaf337eed43569b810470274c7fcc4169324762402416f3097f940d2',
+        'webviewPreload.js': '5e460a651c85e39fd025a96ec1554fabf6a9a1acb00c4aad262c1ea9bdab7a4c',
+        'main.loader.js': '91f8884e8ec2c815fd08372d8984fbbb9bc94a95629dccbda4aefebb68f89aca'
     };
 
     for (const [filename, expectedHash] of Object.entries(checksums)) {
@@ -1269,8 +1272,9 @@ ipcMain.on('configRequest', async () => {
 
 // Local Execution Router
 const { runJS } = require('./execution/jsHandler');
-const { runCpp } = require('./execution/cppHandler');
-const { runJava } = require('./execution/javaHandler');
+const { runCpp } = require('./execution/cppHandler.js');
+const { runJava } = require('./execution/javaHandler.js');
+const { runPython } = require('./execution/pythonHandler.js');
 
 let engineWin = null;
 
@@ -1289,7 +1293,33 @@ app.whenReady().then(() => {
     engineWin.loadFile(path.join(__dirname, 'execution', 'engine.html'));
 });
 
+ipcMain.handle('get-compiler-status', (event) => {
+    const os = require('os');
+    const totalMemBytes = os.totalmem();
+    const totalMemGB = totalMemBytes / (1024 * 1024 * 1024);
+    const hasEnoughRam = totalMemGB > 4.0;
+    
+    return {
+        isAvailable: hasEnoughRam,
+        supportedLanguages: [50, 54, 62, 63, 71, 93],
+        totalRamGB: parseFloat(totalMemGB.toFixed(2))
+    };
+});
+
 ipcMain.handle('run-code', async (event, payload) => {
+    const os = require('os');
+    if (os.totalmem() / (1024 ** 3) <= 4.0) {
+        return {
+            compile_success: false,
+            compile_error: "System does not meet minimum RAM requirements (4GB) for offline compilation.",
+            run_success: false,
+            run_error: "",
+            stdout: "",
+            stderr: "",
+            results: []
+        };
+    }
+
     const { userWrittenCode, languageId, sampleInputOutput, files } = payload;
     
     try {
@@ -1303,23 +1333,8 @@ ipcMain.handle('run-code', async (event, payload) => {
             return results;
         } else if (languageId === 71) {
             // Python
-            const id = Date.now().toString();
-            return new Promise((resolve) => {
-                const listener = (e, resPayload) => {
-                    if (resPayload.id === id) {
-                        ipcMain.removeListener('python-result', listener);
-                        resolve(resPayload.results);
-                    }
-                };
-                ipcMain.on('python-result', listener);
-                if (engineWin && engineWin.webContents) {
-                    engineWin.webContents.send('run-python', {
-                        id,
-                        code: userWrittenCode,
-                        sampleInputOutput
-                    });
-                }
-            });
+            const results = await runPython(userWrittenCode, sampleInputOutput);
+            return results;
         } else if (languageId === 62) {
             // Java (Modular custom JDK 21)
             const results = await runJava(userWrittenCode, sampleInputOutput, files);
