@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kiosk Browser</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #111;
+    }
+
+    #main-webview {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      border: none;
+      z-index: 1;
+    }
+
+    #overlay-box {
+      position: fixed;
+      right: 0px;
+      bottom: 0px;
+      z-index: 9999;
+      background: rgba(30, 30, 30, 0.95);
+      color: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      padding: 14px 18px;
+      min-width: 170px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: sans-serif;
+      font-size: 1rem;
+      user-select: none;
+    }
+
+    .icon-btn {
+      background: #e74c3c;
+      border: none;
+      color: #fff;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 1.1rem;
+      margin-left: 8px;
+      transition: background 0.2s;
+      outline: none;
+    }
+
+    .icon-btn:active,
+    .icon-btn:focus {
+      background: #c0392b;
+      outline: 2px solid #fff;
+    }
+
+    .icon {
+      margin-right: 4px;
+      font-size: 1.1rem;
+    }
+
+    #battery {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 54px;
+      position: relative;
+    }
+
+    .battery-outer {
+      width: 36px;
+      height: 16px;
+      border: 2px solid #fff;
+      border-radius: 4px;
+      position: relative;
+      background: #222;
+      margin-right: 4px;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+    }
+
+    .battery-inner {
+      height: 100%;
+      border-radius: 2px;
+      background: linear-gradient(90deg, #4caf50, #cddc39);
+      transition: width 0.3s;
+    }
+
+    .battery-cap {
+      width: 4px;
+      height: 8px;
+      background: #fff;
+      position: absolute;
+      right: -6px;
+      top: 3px;
+      border-radius: 1px;
+    }
+
+    .battery-label {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      color: #fff;
+      font-weight: bold;
+      pointer-events: none;
+    }
+
+    #wifi {
+      display: flex;
+      align-items: center;
+      min-width: 36px;
+      position: relative;
+      height: 20px;
+      margin-left: 8px;
+    }
+
+    .wifi-bars {
+      display: flex;
+      align-items: flex-end;
+      height: 18px;
+      gap: 2px;
+    }
+
+    .wifi-bar {
+      width: 4px;
+      background: #fff;
+      border-radius: 2px 2px 0 0;
+      opacity: 0.3;
+      transition: background 0.2s, opacity 0.2s;
+    }
+
+    .wifi-bar.active {
+      opacity: 1;
+      background: #4caf50;
+    }
+
+    #shutdown-modal {
+      display: none;
+      position: fixed;
+      z-index: 10000;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.65);
+      align-items: center;
+      justify-content: center;
+    }
+
+    #shutdown-modal>div {
+      background: #222;
+      padding: 32px 28px 24px 28px;
+      border-radius: 14px;
+      box-shadow: 0 4px 24px #0008;
+      min-width: 320px;
+      max-width: 90vw;
+      text-align: center;
+    }
+
+    #shutdown-modal .btn {
+      background: #444;
+      color: #fff;
+      border: none;
+      padding: 8px 22px;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+      margin: 0 8px;
+    }
+
+    #shutdown-modal .btn-danger {
+      background: #e74c3c;
+    }
+  </style>
+</head>
+
+<body>
+  <webview id="main-webview" partition="persist:webview" preload="webviewPreload.js"
+    allow="microphone; camera; display-capture" src="about:blank" allowpopups disablewebsecurity></webview>
+  <div id="overlay-box">
+    <span id="battery">
+      <span class="battery-outer">
+        <span class="battery-inner" id="battery-fill" style="width:0%"></span>
+        <span class="battery-cap"></span>
+        <span class="battery-label" id="battery-label">--%</span>
+      </span>
+    </span>
+    <span id="wifi">
+      <span class="wifi-bars">
+        <span class="wifi-bar" id="wifi-bar-1" style="height:5px"></span>
+        <span class="wifi-bar" id="wifi-bar-2" style="height:9px"></span>
+        <span class="wifi-bar" id="wifi-bar-3" style="height:13px"></span>
+        <span class="wifi-bar" id="wifi-bar-4" style="height:17px"></span>
+      </span>
+      <span id="wifi-label" style="margin-left:6px;font-size:0.9rem;display:none;"></span>
+    </span>
+    <button class="icon-btn" id="shutdown" title="Turn Off Browser">⏻</button>
+  </div>
+  <div id="shutdown-modal">
+    <div>
+      <div style="font-size:1.25rem;font-weight:bold;margin-bottom:18px;color:white;">Are you sure you want to exit?</div>
+      <div id="shutdown-countdown" style="font-size:1.1rem;margin-bottom:18px;display:none;"></div>
+      <div id="shutdown-btns">
+        <button id="shutdown-yes" class="btn btn-danger">Yes</button>
+        <button id="shutdown-no" class="btn">No</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    // Battery
+    function setBattery(percent) {
+      const fill = document.getElementById('battery-fill');
+      const label = document.getElementById('battery-label');
+      fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+      if (percent <= 20) {
+        fill.style.background = '#e74c3c';
+      } else if (percent <= 50) {
+        fill.style.background = '#f1c40f';
+      } else {
+        fill.style.background = 'linear-gradient(90deg, #4caf50, #cddc39)';
+      }
+      label.textContent = percent + '%';
+    }
+    if (navigator.getBattery) {
+      navigator.getBattery().then(battery => {
+        function updateBattery() {
+          setBattery(Math.round(battery.level * 100));
+        }
+        updateBattery();
+        battery.addEventListener('levelchange', updateBattery);
+      });
+    } else {
+      setBattery('--');
+    }
+    // WiFi (network info, try effectiveType for better info)
+    function setWifi(strength) {
+      for (let i = 1; i <= 4; i++) {
+        document.getElementById('wifi-bar-' + i).classList.remove('active');
+      }
+      let bars = 0;
+      if (strength === '4g') bars = 4;
+      else if (strength === '3g') bars = 3;
+      else if (strength === '2g') bars = 2;
+      else if (strength === 'slow-2g') bars = 1;
+      else if (typeof strength === 'number') bars = Math.round(strength);
+      for (let i = 1; i <= bars; i++) {
+        document.getElementById('wifi-bar-' + i).classList.add('active');
+      }
+    }
+    if (navigator.connection && navigator.connection.effectiveType) {
+      let type = navigator.connection.effectiveType;
+      setWifi(type);
+    } else {
+      setWifi(0);
+    }
+    // Shutdown
+    document.getElementById('shutdown').onclick = () => {
+      document.getElementById('shutdown-modal').style.display = 'flex';
+      document.getElementById('shutdown-countdown').style.display = 'none';
+      document.getElementById('shutdown-btns').style.display = 'block';
+    };
+    document.getElementById('shutdown-no').onclick = () => {
+      document.getElementById('shutdown-modal').style.display = 'none';
+    };
+    document.getElementById('shutdown-yes').onclick = () => {
+      document.getElementById('shutdown-btns').style.display = 'none';
+
+      window.postMessage({type: 'delete-key'});
+      window.electronAPI && window.electronAPI.shutdown && window.electronAPI.shutdown();
+      let count = 3;
+      const countdownEl = document.getElementById('shutdown-countdown');
+      countdownEl.style.display = 'block';
+      countdownEl.textContent = `Exiting in ${count} seconds...`;
+      const interval = setInterval(() => {
+        count--;
+        if (count > 0) {
+          countdownEl.textContent = `Exiting in ${count} seconds...`;
+        } else {
+          clearInterval(interval);
+          document.getElementById('shutdown-modal').style.display = 'none';
+        }
+      }, 1000);
+    };
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TheEduCode Execution Engine</title>
+</head>
+<body style="background: #0d1117; color: #c9d1d9; font-family: monospace; padding: 20px;">
+    <h2>Execution Engine Service</h2>
+    <div id="status">Initializing Pyodide Context...</div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        let pythonWorker = null;
+
+        function initPythonWorker() {
+            pythonWorker = new Worker('workers/python.worker.js');
+            pythonWorker.postMessage({ type: 'init', pyodidePath: '../lib/pyodide.js' });
+
+            pythonWorker.onmessage = (e) => {
+                if (e.data.type === 'ready') {
+                    document.getElementById('status').textContent = 'Pyodide Context Ready.';
+                } else if (e.data.type === 'result') {
+                    ipcRenderer.send('python-result', e.data);
+                }
+            };
+        }
+
+        ipcRenderer.on('run-python', (event, payload) => {
+            if (pythonWorker) {
+                pythonWorker.postMessage({
+                    type: 'run',
+                    id: payload.id,
+                    code: payload.code,
+                    sampleInputOutput: payload.sampleInputOutput
+                });
+            }
+        });
+
+        window.onload = initPythonWorker;
+    </script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+{
+  "name": "edocode-browser",
+  "version": "1.5.0",
+  "main": "main.loader.js",
+  "description": "Electron browser for a single URL in kiosk mode.",
+  "author": "Eduniketan Private Limited",
+  "scripts": {
+    "compile": "npx electron .\\compiler-electron.js \"main.js\"",
+    "package": "electron-packager . TheEduCode --platform=win32 --arch=x64 --out=dist --overwrite --icon=icon.ico --executable-name=TheEduCode --asar --ignore=\"(installer\\.nsi|compilers|Windows Updater|build-updater\\.ps1|TheEduCode-Setup-Slim\\.exe|dist|theeducode-updater\\.exe|updater\\.html|Microsoft\\.Web\\.WebView2|WebView2Loader\\.dll|\\.github|\\.vscode|hashgen\\.js|compiler-electron\\.js|README\\.md|package-lock\\.json|assests)$\""
+  },
+  "dependencies": {
+    "bytenode": "^1.5.7",
+    "crypto": "^1.0.1",
+    "crypto-js": "^4.2.0",
+    "express": "^4.22.2",
+    "socket.io-client": "^4.8.1",
+    "sudo-prompt": "^9.2.1"
+  },
+  "devDependencies": {
+    "electron": "^36.9.5",
+    "electron-packager": "^17.1.2"
+  },
+  "build": {
+    "files": [
+      "main.loader.js",
+      "main.jsc",
+      "main.js",
+      "index.html",
+      "preload.js",
+      "icon.ico",
+      "icon.png",
+      "package.json",
+      "node_modules/**/*",
+      "bootstrapper.js",
+      "execution/**/*"
+    ]
+  }
+}
