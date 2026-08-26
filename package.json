@@ -1,12 +1,12 @@
 {
   "name": "edocode-browser",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "main": "main.loader.js",
   "description": "Electron browser for a single URL in kiosk mode.",
   "author": "Eduniketan Private Limited",
   "scripts": {
-    "compile": "npx electron .\\compiler-electron.js \"main.js\"",
-    "package": "electron-packager . TheEduCode --platform=win32 --arch=x64 --out=dist --overwrite --icon=icon.ico --executable-name=TheEduCode --asar --ignore=\"(installer\\.nsi|process_killer\\.exe|compilers|Windows Updater|build-updater\\.ps1|TheEduCode-Setup-Slim\\.exe|dist|theeducode-updater\\.exe|updater\\.html|Microsoft\\.Web\\.WebView2|WebView2Loader\\.dll|\\.github|\\.vscode|hashgen\\.js|compiler-electron\\.js|README\\.md|package-lock\\.json|assests)$\""
+    "compile": "npx electron .\\support_files\\build.js",
+    "package": "electron-packager . TheEduCode --platform=win32 --arch=x64 --out=dist --overwrite --icon=icon.ico --executable-name=TheEduCode --asar --ignore=\"(support_files|compilers|Windows Updater|build-updater\\.ps1|dist|theeducode-updater\\.exe|\\.github|\\.vscode|README\\.md|package-lock\\.json|assests|execution|bundle.*\\.js|.*\\.original\\.js|main\\.js|bootstrapper\\.js|bin)$\""
   },
   "dependencies": {
     "bytenode": "^1.5.7",
@@ -18,7 +18,8 @@
   },
   "devDependencies": {
     "electron": "^36.9.5",
-    "electron-packager": "^17.1.2"
+    "electron-packager": "^17.1.2",
+    "esbuild": "^0.28.2"
   },
   "build": {
     "files": [

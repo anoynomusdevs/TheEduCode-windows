@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TheEduCode Execution Engine</title>
+</head>
+<body style="background: #0d1117; color: #c9d1d9; font-family: monospace; padding: 20px;">
+    <h2>Execution Engine Service</h2>
+    <div id="status">Initializing Pyodide Context...</div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        // Engine HTML is now only used as a background process for rendering/offloading 
+        // tasks if necessary, or for future WebAssembly tools.
+        // Python has been migrated to a native execution handler (pythonHandler.js).
+    </script>
+</body>
+</html>

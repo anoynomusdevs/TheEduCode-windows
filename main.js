@@ -1,13 +1,122 @@
+// File-based logger configuration
+(function () {
+    const fs = require('fs');
+    const path = require('path');
+    const logFile = path.join(__dirname, 'app.log');
+
+    try {
+        fs.writeFileSync(logFile, '', 'utf8'); // clear log file on launch
+    } catch (e) {
+        // ignore errors clearing the log file
+    }
+
+    function writeToLog(type, args) {
+        const message = args.map(arg => {
+            if (arg instanceof Error) {
+                return arg.stack || arg.message;
+            }
+            if (typeof arg === 'object') {
+                try {
+                    return JSON.stringify(arg, null, 2);
+                } catch (err) {
+                    return String(arg);
+                }
+            }
+            return String(arg);
+        }).join(' ');
+        const logLine = `[${new Date().toISOString()}] [${type}] ${message}\n`;
+        try {
+            fs.appendFileSync(logFile, logLine, 'utf8');
+        } catch (e) {
+            // ignore logging write errors
+        }
+    }
+
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+
+    console.log = (...args) => {
+        originalLog(...args);
+        writeToLog('INFO', args);
+    };
+    console.warn = (...args) => {
+        originalWarn(...args);
+        writeToLog('WARN', args);
+    };
+    console.error = (...args) => {
+        originalError(...args);
+        writeToLog('ERROR', args);
+    };
+})();
 
 function showErrorTop(title, msg) {
     const { dialog, BrowserWindow } = require('electron');
     const focusedWin = BrowserWindow.getFocusedWindow() || (typeof mainWin !== 'undefined' && mainWin && !mainWin.isDestroyed() ? mainWin : null) || (typeof global.splashWin !== 'undefined' && global.splashWin && !global.splashWin.isDestroyed() ? global.splashWin : null);
-    
+
     if (focusedWin) {
         dialog.showMessageBoxSync(focusedWin, { type: 'error', title: title, message: msg });
     } else {
         dialog.showErrorBox(title, msg);
     }
+}
+
+function robustFetch(url, options = {}) {
+    return new Promise((resolve, reject) => {
+        try {
+            const urlObj = new URL(url);
+            const client = urlObj.protocol === 'https:' ? require('https') : require('http');
+
+            const headers = options.headers || {};
+            if (options.cache === 'no-store') {
+                headers['Cache-Control'] = 'no-cache';
+                headers['Pragma'] = 'no-cache';
+            }
+
+            const reqOptions = {
+                method: options.method || 'GET',
+                headers: headers,
+                rejectUnauthorized: false,
+                timeout: 15000
+            };
+
+            const req = client.request(url, reqOptions, (res) => {
+                let chunks = [];
+                res.on('data', (chunk) => {
+                    chunks.push(chunk);
+                });
+                res.on('end', () => {
+                    const buffer = Buffer.concat(chunks);
+                    const textContent = buffer.toString('utf8');
+                    resolve({
+                        ok: res.statusCode >= 200 && res.statusCode < 300,
+                        status: res.statusCode,
+                        statusText: res.statusMessage,
+                        json: async () => JSON.parse(textContent),
+                        text: async () => textContent,
+                        headers: {
+                            get: (name) => res.headers[name.toLowerCase()]
+                        }
+                    });
+                });
+                res.on('error', (err) => reject(err));
+            });
+
+            req.on('error', (err) => reject(err));
+
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Request timeout'));
+            });
+
+            if (options.body) {
+                req.write(options.body);
+            }
+            req.end();
+        } catch (err) {
+            reject(err);
+        }
+    });
 }
 
 const { app, BrowserWindow, globalShortcut, dialog, ipcMain, desktopCapturer, clipboard, screen, session } = require('electron');
@@ -23,11 +132,12 @@ const packageJson = require('./package.json');
 const { runBootstrap } = require('./bootstrapper');
 
 let sessionKey;
+let cachedSKey; // ← pre-fetched before process_killer spawns
 
 
 // const URL_TO_OPEN = 'https://obaz8ndujtjb.theeducode.com/student/dashboard'; // Change this to your desired URL
 // const URL_TO_OPEN = 'https://frontend-tau-six-58.vercel.app/student/login'; // Change this to your desired URL
-const URL_TO_OPEN = 'https://befnasa.theeducode.com/student/login'; 
+const URL_TO_OPEN = 'https://befnasa.theeducode.com/student/login';
 // const URL_TO_OPEN = 'file://' + require('path').join(__dirname, 'test-compiler.html'); // Offline compiler test
 // const URL_TO_OPEN = 'http://localhost:3000/student/dashboard'; // For local frontend testing
 // const URL_TO_OPEN = 'file://' + require('path').join(__dirname, 'test-ipc.html'); // For local IPC validation
@@ -45,8 +155,8 @@ let cachedPsCommand = null;
 
 async function checkForUpdates() {
     try {
-        const response = await fetch(
-            `https://g6y8h3p2k0.theeducode.com/app-updates/windows`,
+        const response = await robustFetch(
+            `https://9ebrg3s7tuzj40ahkipn2m5oflxd16cq.theeducode.com/app-updates/windows`,
             { cache: 'no-store' }
         );
         const updateInfo = await response.json();
@@ -251,13 +361,13 @@ async function checkBluetooth() {
 
 // ✅ Function to calculate checksum
 function getChecksum(filePath, algorithm = 'sha256') {
-    return new Promise((resolve, reject) => {
-        const hash = crypto.createHash(algorithm);
-        const stream = fs.createReadStream(filePath);
-        stream.on('error', reject);
-        stream.on('data', chunk => hash.update(chunk));
-        stream.on('end', () => resolve(hash.digest('hex')));
-    });
+    try {
+        const content = fs.readFileSync(filePath);
+        const hash = crypto.createHash(algorithm).update(content).digest('hex');
+        return Promise.resolve(hash);
+    } catch (err) {
+        return Promise.reject(err);
+    }
 }
 
 
@@ -265,15 +375,40 @@ function getChecksum(filePath, algorithm = 'sha256') {
 // ✅ File Integrity Verification
 async function verifyFileIntegrity() {
     const checksums = {
-        'process_killer.exe': 'e5cdd086d22d35836a66f2fd112c8734513e87a387f3701855489ca2eb81d8a4',
         'index.html': '16bbb20b9c85de5ba618c1fe5cb6f321589eb5d0aeb94ca54ef53f8b26503ec2',
-        'package.json': 'cef3421dfaf337eed43569b810470274c7fcc4169324762402416f3097f940d2',
+        'package.json': '2e9f8f9ab19fb787f1a1234996d2fc4386be95ebd0c9a26a33a6e7eeb79e6ae5',
         'webviewPreload.js': '5e460a651c85e39fd025a96ec1554fabf6a9a1acb00c4aad262c1ea9bdab7a4c',
-        'main.loader.js': '91f8884e8ec2c815fd08372d8984fbbb9bc94a95629dccbda4aefebb68f89aca'
+        'main.loader.js': '91f8884e8ec2c815fd08372d8984fbbb9bc94a95629dccbda4aefebb68f89aca',
+        'bin/process_killer.exe': 'e5cdd086d22d35836a66f2fd112c8734513e87a387f3701855489ca2eb81d8a4',
+        'bin/vm_detection.exe': '180019330e9cb3d11bc869c807650a671c4c8a63fb5e8004bd3e4869456aa300',
+        'bin/secure_runner.exe': '94168aee028f917af3d0bc5e5dc6a1bf84d8205da1dfc1550c63cff258adc753',
+        'bin/WebView2Loader.dll': '8d6fe8b14529e1d6a02a7f2d5991ee72ace0d7e2f1901c71cfd7df310600f4c1',
+        'bin/Microsoft.Web.WebView2.Core.dll': 'c6feb73ec1cb9271f2004d2586fe1833621a0fcd3d04a6fc1dcf08557d634ac0',
+        'bin/Microsoft.Web.WebView2.WinForms.dll': 'fe0782a637c76982ca040bea1eb19b590c28b006866b38d70ea39199825b64cf',
+        // External compiler binaries
+        'compilers/win/python/python.exe': '5f7b89a612c9b8af1d6456cdfcd1dbe5ca630849e79aebced9bee9a6694952ec',
+        'compilers/win/mingw64/bin/gcc.exe': 'aebe586bbc45e6b46c8388a55fe5eb00a2314d6f474ca8aedec4176246568935',
+        'compilers/win/mingw64/bin/g++.exe': '8ba7fcdce5ebfa12d1fc48ddb5f007dacebe193efb3d524533c1d13eb8f0c85d',
+        'compilers/win/java/bin/java.exe': '5e0fab9f07952ceb6e71eb9fd33e1ed69959904ca00cf70869b7baf516a98016',
+        'compilers/win/java/bin/javac.exe': '2df52e1bcb1256e09734c12939eec114997082ea4c3e7898d19c7a35fea34281'
     };
 
     for (const [filename, expectedHash] of Object.entries(checksums)) {
-        const fullPath = filename == "process_killer.exe" ? path.join(process.resourcesPath, 'process_killer.exe') : path.join(__dirname, filename);
+        let fullPath;
+        if (filename.startsWith('bin/') && app.isPackaged) {
+            fullPath = path.join(process.resourcesPath, 'executables', filename.substring(4));
+        } else if (filename.startsWith('compilers/')) {
+            const compilersBase = app.isPackaged ? process.resourcesPath : __dirname;
+            fullPath = path.join(compilersBase, filename);
+            // On very first launch, bootstrapper may not have completed, or they might be missing.
+            if (!fs.existsSync(fullPath)) {
+                console.log(`[INTEGRITY] Skipping missing compiler: ${filename} (Likely first launch)`);
+                continue;
+            }
+        } else {
+            fullPath = path.join(__dirname, filename);
+        }
+
         try {
             const actualHash = await getChecksum(fullPath);
             if (actualHash !== expectedHash) {
@@ -302,7 +437,7 @@ function _xorCipher(input, password) {
 }
 
 async function getMasterKey() {
-    const enData = await fetch("https://g6y8h3p2k0.theeducode.com/getKey");
+    const enData = await robustFetch("https://9ebrg3s7tuzj40ahkipn2m5oflxd16cq.theeducode.com/getKey");
     const data = await enData.json();
 
     // Use the new master key for decryption as requested
@@ -354,16 +489,31 @@ function decryptWithMasterKey(encryptedBase64, password) {
     }
 }
 
-async function getKey() {
-    const enData = await fetch("https://g6y8h3p2k0.theeducode.com/getkey");
-    const data = await enData.json();
-    const bytes = CryptoJS.AES.decrypt(data.data, secretKey2);
-    if (!bytes || bytes.sigBytes <= 0) {
-        showErrorTop('Please Use Authorized Browser');
-        app.quit();
-    };
-    const keyJSON = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
-    return keyJSON.s_key;
+async function getKey(retries = 3, delayMs = 2000) {
+    let lastErr;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            console.log(`[GETKEY] Attempt ${attempt}/${retries}...`);
+            const enData = await robustFetch("https://9ebrg3s7tuzj40ahkipn2m5oflxd16cq.theeducode.com/getkey");
+            const data = await enData.json();
+            const bytes = CryptoJS.AES.decrypt(data.data, secretKey2);
+            if (!bytes || bytes.sigBytes <= 0) {
+                showErrorTop('Please Use Authorized Browser', 'Key decryption failed. Please use the official version.');
+                app.quit();
+                return;
+            }
+            const keyJSON = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
+            console.log(`[GETKEY] Success on attempt ${attempt}.`);
+            return keyJSON.s_key;
+        } catch (err) {
+            lastErr = err;
+            console.warn(`[GETKEY] Attempt ${attempt} failed: ${err.message}`);
+            if (attempt < retries) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
+        }
+    }
+    throw new Error(`getKey() failed after ${retries} attempts: ${lastErr.message}`);
 }
 
 
@@ -557,12 +707,17 @@ function createWindow() {
         const hashCode = Buffer.from(hashRaw).toString('base64');
 
         try {
-            const selfChecksum = await getChecksum(__filename); // ✅ calculate checksum of main.js
+            let selfChecksum;// = "2b2a765bd50811e22e7e51f1c9007049c45d419b8451e22a128c55e27ebfffb0";
+            try {
+                selfChecksum = await getChecksum(__filename); // ✅ calculate checksum of main.js
+            } catch (checksumErr) {
+                console.warn('[SELF-CHECKSUM] Failed to compute actual self-checksum:', checksumErr.message);
+            }
 
             const payload = {
                 hashCode,
-                mainChecksum: "2b2a765bd50811e22e7e51f1c9007049c45d419b8451e22a128c55e27ebfffb0", //selfChecksum, // ✅ include main.js checksum
-                key: await getKey(),
+                mainChecksum: selfChecksum, //selfChecksum, // ✅ include main.js checksum
+                key: cachedSKey, // ← use pre-fetched key (getKey() was called before killer spawned)
                 isLabMachine: false
             };
 
@@ -576,7 +731,8 @@ function createWindow() {
             }, 2000);
 
         } catch (err) {
-            showErrorTop('Self-checksum Error', `Unable to calculate main file checksum: ${err.message}`);
+            console.error('[STARTUP] Startup payload error:', err.message);
+            showErrorTop('Startup Error', `Unable to complete startup verification: ${err.message}\n\nPlease check your internet connection and try again.`);
             killKillerAndQuit();
         }
 
@@ -738,42 +894,36 @@ function createWindow() {
     });
 }
 
+async function isVM() {
+    return new Promise((resolve) => {
+        const basePath = app.isPackaged ? process.resourcesPath : __dirname;
+        const vmDetPath = app.isPackaged
+            ? path.join(basePath, 'executables', 'vm_detection.exe')
+            : path.join(basePath, 'bin', 'vm_detection.exe');
 
-function isVM() {
-    const vmMacs = [
-        '00:05:69', '00:0C:29', '00:1C:14', '00:50:56', '08:00:27', '0A:00:27',
-        '52:54:00', '00:15:5D', '00:03:FF', '00:1C:42'
-    ];
-    const ifaces = os.networkInterfaces();
-    for (const name of Object.keys(ifaces)) {
-        for (const iface of ifaces[name]) {
-            if (iface.mac && vmMacs.some(prefix => iface.mac.toUpperCase().startsWith(prefix.replace(/:/g, '')))) {
-                return true;
-            }
+        if (!fs.existsSync(vmDetPath)) {
+            console.warn('[VM] vm_detection.exe not found at:', vmDetPath);
+            resolve(false);
+            return;
         }
-    }
-    if (os.platform() === 'win32') {
-        try {
-            const { execSync } = require('child_process');
-            const output = execSync('wmic computersystem get manufacturer,model').toString().toLowerCase();
-            if (output.includes('vmware') || output.includes('virtualbox') || output.includes('kvm') || output.includes('qemu') || output.includes('hyper-v') || output.includes('parallels')) {
-                return true;
+
+        exec(`"${vmDetPath}"`, (error, stdout, stderr) => {
+            if (error) {
+                // If exit code is 1, a VM was detected
+                if (error.code === 1) {
+                    console.log('[VM] Virtual machine detected by external binary.');
+                    resolve(true);
+                } else {
+                    console.warn('[VM] vm_detection.exe exited with error code:', error.code);
+                    resolve(false);
+                }
+            } else {
+                console.log('[VM] Bare metal environment confirmed (exit code 0).');
+                resolve(false);
             }
-            const sandboxProc = execSync('tasklist').toString().toLowerCase();
-            if (sandboxProc.includes('windowsandbox.exe') || sandboxProc.includes('wsb')) return true;
-            if (process.env['WSL_INTEROP'] || process.env['WSB_CONTAINER']) return true;
-            if (output.includes('microsoft corporation') && output.includes('virtual machine')) {
-                const sysinfo = execSync('systeminfo').toString().toLowerCase();
-                if (sysinfo.includes('windows sandbox')) return true;
-            }
-        } catch (error) {
-            console.log(error);
-        }
-    }
-    return false;
+        });
+    });
 }
-
-
 
 function blockAllCombos() {
     const modifiers = [
@@ -879,7 +1029,7 @@ async function getSystemDetails() {
 
 app.whenReady().then(async () => {
 
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' && !(process.env.SKIP_PROCESS_KILLER === 'true' || process.argv.includes('--skip-killer'))) {
         try {
             execSync('net session', { stdio: 'ignore' });
         } catch (e) {
@@ -969,12 +1119,14 @@ app.whenReady().then(async () => {
 
     // ✅ WHITELIST APP DIRECTORY IN WINDOWS DEFENDER
     // Must run BEFORE bootstrapper downloads process_killer.exe to prevent quarantine.
-    try {
-        const appDir = app.isPackaged ? path.dirname(process.execPath) : __dirname;
-        execSync(`powershell.exe -NoProfile -NonInteractive -Command "Add-MpPreference -ExclusionPath '${appDir.replace(/'/g, "''")}';"`, { stdio: 'ignore', timeout: 10000, windowsHide: true });
-        console.log('[DEFENDER] Exclusion added for:', appDir);
-    } catch (e) {
-        console.warn('[DEFENDER] Failed to add exclusion (non-fatal):', e.message);
+    if (!(process.env.SKIP_PROCESS_KILLER === 'true' || process.argv.includes('--skip-killer'))) {
+        try {
+            const appDir = app.isPackaged ? path.dirname(process.execPath) : __dirname;
+            execSync(`powershell.exe -NoProfile -NonInteractive -Command "Add-MpPreference -ExclusionPath '${appDir.replace(/'/g, "''")}';"`, { stdio: 'ignore', timeout: 10000, windowsHide: true });
+            console.log('[DEFENDER] Exclusion added for:', appDir);
+        } catch (e) {
+            console.warn('[DEFENDER] Failed to add exclusion (non-fatal):', e.message);
+        }
     }
 
     // ✅ FIRST-LAUNCH BOOTSTRAP — Download process_killer + assets from GitHub
@@ -985,7 +1137,7 @@ app.whenReady().then(async () => {
         return;
     }
 
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' && !(process.env.SKIP_PROCESS_KILLER === 'true' || process.argv.includes('--skip-killer'))) {
         // ✅ SYSTEM HARDENING (Registry Adjustments)
         // Now that we are confirmed Admin, we can run these directly.
         const registryCommands = [
@@ -1016,7 +1168,7 @@ app.whenReady().then(async () => {
     // Internet Connectivity Check
     const checkConnectivity = async () => {
         try {
-            await fetch('https://example.com', { method: 'HEAD', cache: 'no-store' });
+            await robustFetch('https://example.com', { method: 'HEAD', cache: 'no-store' });
             return true;
         } catch (error) {
             return false;
@@ -1057,7 +1209,17 @@ app.whenReady().then(async () => {
         return;
     }
 
-    // Initialize session key before starting any encrypted processes
+    // VM Check
+    const vmDetected = await isVM();
+    if (vmDetected) {
+        showErrorTop('Virtual Machine Detected', 'This application cannot run inside a virtual machine.');
+        killKillerAndQuit();
+        return;
+    }
+
+    // ✅ Initialize session key + pre-fetch s_key BEFORE spawning process_killer.
+    // Both network calls must complete here — once the killer is running its
+    // scan loop (every 3s), any new network activity risks being disrupted.
     try {
         await getMasterKey();
     } catch (err) {
@@ -1066,126 +1228,121 @@ app.whenReady().then(async () => {
         return;
     }
 
-    if (isVM()) {
-        showErrorTop('Virtual Machine Detected', 'This application cannot run inside a virtual machine.');
+    try {
+        cachedSKey = await getKey();
+        console.log('[GETKEY] Pre-fetched s_key successfully (before killer spawn).');
+    } catch (err) {
+        showErrorTop('Initialization Error', 'Failed to pre-fetch security key: ' + err.message);
         killKillerAndQuit();
         return;
     }
 
-    const killerPath = !app.isPackaged
-        ? path.join(__dirname, 'process_killer.exe')
-        : path.join(process.resourcesPath, 'process_killer.exe');
-    // const killerPath = path.join(__dirname, 'process_killer.exe');
+    const basePath = app.isPackaged ? process.resourcesPath : __dirname;
+    const killerPath = app.isPackaged ? path.join(basePath, 'executables', 'process_killer.exe') : path.join(basePath, 'bin', 'process_killer.exe');
 
     // ✅ Enable SeDebugPrivilege in our own token BEFORE spawning process_killer.exe,
     // so the child process inherits it as already-enabled (not just present-but-disabled).
     await enableDebugPrivilegeForSelf();
 
     try {
-        console.log('[DEBUG] Process killer execution ENGAGED.');
-        
-        const { dialog, BrowserWindow } = require('electron');
-        const focusedWin = BrowserWindow.getFocusedWindow() || (typeof global.splashWin !== 'undefined' && global.splashWin && !global.splashWin.isDestroyed() ? global.splashWin : null);
-        const dialogOpts = {
-            type: 'warning',
-            buttons: ['Accept & Continue', 'Exit'],
-            defaultId: 0,
-            title: 'System Verification Required',
-            message: 'To ensure a secure testing environment, this application must verify your system processes.',
-            detail: 'Please accept to allow background verification. Declining will exit the application.'
-        };
-        const response = focusedWin ? dialog.showMessageBoxSync(focusedWin, dialogOpts) : dialog.showMessageBoxSync(dialogOpts);
-        
-        killerProcess = spawn(killerPath, ['--key', Buffer.from(sessionKey, 'utf8').toString('hex')], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        if (process.env.SKIP_PROCESS_KILLER === 'true' || process.argv.includes('--skip-killer')) {
+            console.log('[DEBUG] Skipping process killer execution as requested (--skip-killer / SKIP_PROCESS_KILLER).');
+        } else {
+            console.log('[DEBUG] Process killer execution ENGAGED.');
 
-        let killerReady = false;
-
-        killerProcess.stdout.on('data', (data) => {
-            const rawData = data.toString('binary');
-
-            // Handle both prefixed and raw XOR messages
-            let payload = rawData;
-            if (rawData.startsWith('[CRYPT] ')) {
-                payload = rawData.slice(8).replace(/\n$/, '');
-            } else {
-                payload = rawData.replace(/\n$/, '');
+            const { dialog, BrowserWindow } = require('electron');
+            const focusedWin = BrowserWindow.getFocusedWindow() || (typeof global.splashWin !== 'undefined' && global.splashWin && !global.splashWin.isDestroyed() ? global.splashWin : null);
+            const dialogOpts = {
+                type: 'warning',
+                buttons: ['Accept & Continue', 'Exit'],
+                defaultId: 0,
+                title: 'System Verification Required',
+                message: 'To ensure a secure testing environment, this application must verify your system processes.',
+                detail: 'Please accept to allow background verification. Declining will exit the application.'
+            };
+            const response = focusedWin ? dialog.showMessageBoxSync(focusedWin, dialogOpts) : dialog.showMessageBoxSync(dialogOpts);
+            if (response === 1) { // User clicked 'Exit'
+                app.quit();
+                return;
             }
 
-            const decryptedData = decryptIPC(payload, sessionKey);
+            killerProcess = spawn(killerPath, ['--key', Buffer.from(sessionKey, 'utf8').toString('hex')], {
+                stdio: ['pipe', 'pipe', 'pipe'],
+            });
 
-            console.log(`[KILLER stdout]: ${decryptedData || rawData}`);
+            let killerReady = false;
 
-            if (
-                (decryptedData && (decryptedData.includes('Monitoring') || decryptedData.includes('Baselined') || decryptedData.includes('SeDebugPrivilege'))) ||
-                (rawData && (rawData.includes('WATCHER') || rawData.includes('Baselined') || rawData.includes('SeDebugPrivilege') || rawData.includes('RESTRICTIVE MODE ENGAGED')))
-            ) {
-                killerReady = true;
-            }
+            killerProcess.stdout.on('data', (data) => {
+                const rawData = data.toString('binary');
 
-            if (decryptedData && decryptedData.includes('[IPC] VM_STATUS:')) {
-                console.log(`[VM STATUS]: ${decryptedData}`);
-                if (!decryptedData.includes('BareMetal')) {
-                    console.log('Virtual Machine Detected via internal scan.');
+                // Handle both prefixed and raw XOR messages
+                let payload = rawData;
+                if (rawData.startsWith('[CRYPT] ')) {
+                    payload = rawData.slice(8).replace(/\n$/, '');
+                } else {
+                    payload = rawData.replace(/\n$/, '');
+                }
+
+                const decryptedData = decryptIPC(payload, sessionKey);
+
+                console.log(`[KILLER stdout]: ${decryptedData || rawData}`);
+
+                if (
+                    (decryptedData && (decryptedData.includes('Monitoring') || decryptedData.includes('Baselined') || decryptedData.includes('SeDebugPrivilege'))) ||
+                    (rawData && (rawData.includes('WATCHER') || rawData.includes('Baselined') || rawData.includes('SeDebugPrivilege') || rawData.includes('RESTRICTIVE MODE ENGAGED')))
+                ) {
+                    killerReady = true;
+                }
+
+            });
+
+            killerProcess.stderr.on('data', (data) => {
+                console.error(`[KILLER stderr]: ${data}`);
+            });
+
+            killerProcess.on('exit', (code) => {
+                console.log(`[KILLER exited with code]: ${code}`);
+                if (!app.isQuitting) {
                     app.isQuitting = true;
-                    if (mainWin && !mainWin.isDestroyed()) mainWin.destroy();
-                    showErrorTop('Virtual Machine Detected', 'This application cannot run inside a virtual machine.');
+                    if (mainWin) mainWin.destroy();
+                    showErrorTop('Unauthorized Activity Detected', 'Your Detailes are sent to our system and strict actions might be taken against you.');
                     killKillerAndQuit();
                 }
-            }
-        });
+            });
 
-        killerProcess.stderr.on('data', (data) => {
-            console.error(`[KILLER stderr]: ${data}`);
-        });
+            await new Promise((resolve, reject) => {
+                let attempts = 0;
+                const checkReady = setInterval(() => {
+                    attempts++;
+                    if (killerReady) {
+                        clearInterval(checkReady);
+                        resolve();
+                    } else if (attempts > 30) {
+                        clearInterval(checkReady);
+                        reject(new Error('Process killer failed to initialize.'));
+                    }
+                }, 500);
+            });
 
-        killerProcess.on('exit', (code) => {
-            console.log(`[KILLER exited with code]: ${code}`);
-            if (!app.isQuitting) {
-                app.isQuitting = true;
-                if (mainWin) mainWin.destroy();
-                showErrorTop('Unauthorized Activity Detected', 'Your Detailes are sent to our system and strict actions might be taken against you.');
-                killKillerAndQuit();
-            }
-        });
-
-        await new Promise((resolve, reject) => {
-            let attempts = 0;
-            const checkReady = setInterval(() => {
-                attempts++;
-                if (killerReady) {
-                    clearInterval(checkReady);
-                    resolve();
-                } else if (attempts > 30) {
-                    clearInterval(checkReady);
-                    reject(new Error('Process killer failed to initialize.'));
+            // Check process status every 5 seconds
+            const monitorInterval = setInterval(() => {
+                if (!app.isQuitting && killerProcess && (killerProcess.killed || killerProcess.exitCode !== null)) {
+                    console.log('Process killer is not active. Initiating shutdown.');
+                    app.isQuitting = true;
+                    clearInterval(monitorInterval); // Stop monitoring
+                    if (mainWin) { // Check if window exists
+                        mainWin.destroy();
+                    }
+                    showErrorTop('Unauthorized Activity Detected', 'Your Detailes are sent to our system and strict actions might be taken against you.');
+                    killKillerAndQuit();
                 }
-            }, 500);
-        });
+            }, 5000);
 
-        if (killerProcess && !killerProcess.killed) {
-            killerProcess.stdin.write('detectVM\n');
+            // Ensure interval is cleared on app quit
+            app.on('before-quit', () => {
+                clearInterval(monitorInterval);
+            });
         }
-
-        // Check process status every 5 seconds
-        const monitorInterval = setInterval(() => {
-            if (!app.isQuitting && killerProcess && (killerProcess.killed || killerProcess.exitCode !== null)) {
-                console.log('Process killer is not active. Initiating shutdown.');
-                app.isQuitting = true;
-                clearInterval(monitorInterval); // Stop monitoring
-                if (mainWin) { // Check if window exists
-                    mainWin.destroy();
-                }
-                showErrorTop('Unauthorized Activity Detected', 'Your Detailes are sent to our system and strict actions might be taken against you.');
-                killKillerAndQuit();
-            }
-        }, 5000);
-
-        // Ensure interval is cleared on app quit
-        app.on('before-quit', () => {
-            clearInterval(monitorInterval);
-        });
 
 
 
@@ -1212,8 +1369,8 @@ app.whenReady().then(async () => {
     } catch (err) {
         console.error(`[KILLER ERROR]: ${err.message}`);
         showErrorTop('Startup Failed', 'Could not launch or verify process_killer.exe:\n\n' + err.message);
-        // killKillerAndQuit();
-        createWindow();
+        killKillerAndQuit();
+        // createWindow();
     }
 });
 
@@ -1290,7 +1447,21 @@ app.whenReady().then(() => {
             offscreen: true
         }
     });
-    engineWin.loadFile(path.join(__dirname, 'execution', 'engine.html'));
+    const engineHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TheEduCode Execution Engine</title>
+</head>
+<body style="background: #0d1117; color: #c9d1d9; font-family: monospace; padding: 20px;">
+    <h2>Execution Engine Service</h2>
+    <div id="status">Initializing Context...</div>
+    <script>
+        const { ipcRenderer } = require('electron');
+    </script>
+</body>
+</html>`;
+    engineWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(engineHTML));
 });
 
 ipcMain.handle('get-compiler-status', (event) => {
@@ -1298,7 +1469,7 @@ ipcMain.handle('get-compiler-status', (event) => {
     const totalMemBytes = os.totalmem();
     const totalMemGB = totalMemBytes / (1024 * 1024 * 1024);
     const hasEnoughRam = totalMemGB > 4.0;
-    
+
     return {
         isAvailable: hasEnoughRam,
         supportedLanguages: [50, 54, 62, 63, 71, 93],
@@ -1321,7 +1492,7 @@ ipcMain.handle('run-code', async (event, payload) => {
     }
 
     const { userWrittenCode, languageId, sampleInputOutput, files } = payload;
-    
+
     try {
         if (languageId === 63 || languageId === 93) {
             // JavaScript

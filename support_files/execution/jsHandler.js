@@ -1,5 +1,5 @@
 const vm = require('vm');
-const { MAX_OUTPUT_BYTES, obfuscatePaths } = require('./security');
+
 /**
  * Sandboxed JavaScript execution engine.
  * Language IDs: 63 (JavaScript Node.js), 93 (JavaScript Sandbox)
@@ -16,41 +16,20 @@ async function runJS(userWrittenCode, sampleInputOutput) {
         const sandbox = {
             console: {
                 log: (...args) => {
-                    const str = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\n';
-                    if (stdoutBuffer.length + str.length > MAX_OUTPUT_BYTES) {
-                        executionError = "Output Limit Exceeded";
-                        throw new Error("Output Limit Exceeded");
-                    }
-                    stdoutBuffer += str;
+                    stdoutBuffer += args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\n';
                 },
                 error: (...args) => {
-                    const str = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\n';
-                    if (stderrBuffer.length + str.length > MAX_OUTPUT_BYTES) {
-                        executionError = "Output Limit Exceeded";
-                        throw new Error("Output Limit Exceeded");
-                    }
-                    stderrBuffer += str;
+                    stderrBuffer += args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\n';
                 },
                 warn: (...args) => {
-                    const str = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\n';
-                    if (stdoutBuffer.length + str.length > MAX_OUTPUT_BYTES) {
-                        executionError = "Output Limit Exceeded";
-                        throw new Error("Output Limit Exceeded");
-                    }
-                    stdoutBuffer += str;
+                    stdoutBuffer += args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\n';
                 }
             },
             input: input,
             process: {
                 env: {},
                 stdout: {
-                    write: (str) => { 
-                        if (stdoutBuffer.length + str.length > MAX_OUTPUT_BYTES) {
-                            executionError = "Output Limit Exceeded";
-                            throw new Error("Output Limit Exceeded");
-                        }
-                        stdoutBuffer += str; 
-                    }
+                    write: (str) => { stdoutBuffer += str; }
                 }
             }
         };
@@ -84,9 +63,9 @@ async function runJS(userWrittenCode, sampleInputOutput) {
 
         results.push({
             run_success: testCasePassed,
-            run_error: obfuscatePaths(executionError || (testCasePassed ? "" : "Wrong Answer")),
-            stdout: obfuscatePaths(stdoutBuffer),
-            stderr: obfuscatePaths(stderrBuffer)
+            run_error: executionError || (testCasePassed ? "" : "Wrong Answer"),
+            stdout: stdoutBuffer,
+            stderr: stderrBuffer
         });
     }
     

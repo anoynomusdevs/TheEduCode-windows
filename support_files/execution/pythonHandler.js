@@ -2,7 +2,6 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { app } = require('electron');
-const { MAX_OUTPUT_BYTES, obfuscatePaths, getSecureRunnerPath } = require('./security');
 
 /**
  * Python Local Compiler Runner.
@@ -41,23 +40,11 @@ async function runPython(userWrittenCode, sampleInputOutput) {
         const startTime = process.hrtime();
 
         await new Promise((resolve) => {
-            const secureRunner = getSecureRunnerPath();
-            let runner;
-            
-            if (secureRunner) {
-                const runnerArgs = [
-                    '--timeout', '5000',
-                    '--memory', (256 * 1024 * 1024).toString(),
-                    '--cmd', pythonPath, sourcePath
-                ];
-                runner = spawn(secureRunner, runnerArgs, { cwd: tempDir });
-            } else {
-                runner = spawn(pythonPath, [sourcePath], { cwd: tempDir });
-            }
+            const runner = spawn(pythonPath, [sourcePath], { cwd: tempDir });
 
             const timer = setTimeout(() => {
                 isTimeout = true;
-                if (!executionError) executionError = "Time Limit Exceeded (5000ms)";
+                executionError = "Time Limit Exceeded (5000ms)";
                 runner.kill('SIGKILL');
             }, 5000);
 
@@ -66,22 +53,8 @@ async function runPython(userWrittenCode, sampleInputOutput) {
                 runner.stdin.end();
             }
 
-            runner.stdout.on('data', (d) => { 
-                if (stdoutBuffer.length + d.length > MAX_OUTPUT_BYTES) {
-                    executionError = "Output Limit Exceeded";
-                    runner.kill('SIGKILL');
-                } else {
-                    stdoutBuffer += d.toString(); 
-                }
-            });
-            runner.stderr.on('data', (d) => { 
-                if (stderrBuffer.length + d.length > MAX_OUTPUT_BYTES) {
-                    executionError = "Output Limit Exceeded";
-                    runner.kill('SIGKILL');
-                } else {
-                    stderrBuffer += d.toString(); 
-                }
-            });
+            runner.stdout.on('data', (d) => { stdoutBuffer += d.toString(); });
+            runner.stderr.on('data', (d) => { stderrBuffer += d.toString(); });
 
             runner.on('error', (err) => {
                 clearTimeout(timer);
@@ -91,15 +64,12 @@ async function runPython(userWrittenCode, sampleInputOutput) {
 
             runner.on('close', (code) => {
                 clearTimeout(timer);
-                if (code !== 0 && code !== 121 && !isTimeout && !executionError) {
+                if (code !== 0 && !isTimeout) {
                     if (stderrBuffer.includes('SyntaxError')) {
                         executionError = `SyntaxError\n${stderrBuffer}`;
                     } else {
                         executionError = `Process exited with code ${code}\n${stderrBuffer}`;
                     }
-                } else if (code === 121 && !isTimeout) {
-                    isTimeout = true;
-                    executionError = "Time Limit Exceeded (5000ms)";
                 }
                 resolve();
             });
@@ -113,9 +83,9 @@ async function runPython(userWrittenCode, sampleInputOutput) {
 
         results.push({
             run_success: testCasePassed,
-            run_error: obfuscatePaths(executionError || (testCasePassed ? "" : "Wrong Answer")),
-            stdout: obfuscatePaths(stdoutBuffer),
-            stderr: obfuscatePaths(stderrBuffer)
+            run_error: executionError || (testCasePassed ? "" : "Wrong Answer"),
+            stdout: stdoutBuffer,
+            stderr: stderrBuffer
         });
     }
 

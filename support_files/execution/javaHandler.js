@@ -2,7 +2,6 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { app } = require('electron');
-const { MAX_OUTPUT_BYTES, obfuscatePaths, getSecureRunnerPath } = require('./security');
 
 /**
  * Java Compiler Runner using portable OpenJDK 21.
@@ -50,29 +49,10 @@ async function runJava(userWrittenCode, sampleInputOutput, files) {
     // 1. Compile Phase
     const compileResult = await new Promise((resolve) => {
         const compileArgs = [mainSourcePath];
-        
-        const secureRunner = getSecureRunnerPath();
-        let child;
-        if (secureRunner) {
-            const runnerArgs = [
-                '--timeout', '10000', // 10s compile limit
-                '--memory', (512 * 1024 * 1024).toString(), // 512MB for Java compile
-                '--cmd', javacPath, ...compileArgs
-            ];
-            child = spawn(secureRunner, runnerArgs, { cwd: tempDir });
-        } else {
-            child = spawn(javacPath, compileArgs, { cwd: tempDir });
-        }
-        
+        const child = spawn(javacPath, compileArgs, { cwd: tempDir });
         let stderr = '';
 
-        child.stderr.on('data', (d) => { 
-            if (stderr.length + d.length > MAX_OUTPUT_BYTES) {
-                child.kill('SIGKILL');
-            } else {
-                stderr += d.toString(); 
-            }
-        });
+        child.stderr.on('data', (d) => { stderr += d.toString(); });
         child.on('error', (err) => resolve({ code: 1, stderr: err.message }));
         child.on('close', (code) => resolve({ code, stderr }));
     });
@@ -81,7 +61,7 @@ async function runJava(userWrittenCode, sampleInputOutput, files) {
         try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
         return {
             compile_success: false,
-            compile_error: obfuscatePaths(compileResult.stderr),
+            compile_error: compileResult.stderr,
             run_success: false,
             run_error: "",
             stdout: "",
@@ -103,23 +83,11 @@ async function runJava(userWrittenCode, sampleInputOutput, files) {
 
         await new Promise((resolve) => {
             const runArgs = ['-cp', '.', mainClassName];
-            const secureRunner = getSecureRunnerPath();
-            let runner;
-            
-            if (secureRunner) {
-                const runnerArgs = [
-                    '--timeout', '5000',
-                    '--memory', (512 * 1024 * 1024).toString(),
-                    '--cmd', javaPath, ...runArgs
-                ];
-                runner = spawn(secureRunner, runnerArgs, { cwd: tempDir });
-            } else {
-                runner = spawn(javaPath, runArgs, { cwd: tempDir });
-            }
+            const runner = spawn(javaPath, runArgs, { cwd: tempDir });
 
             const timer = setTimeout(() => {
                 isTimeout = true;
-                if (!executionError) executionError = "Time Limit Exceeded (5000ms)";
+                executionError = "Time Limit Exceeded (5000ms)";
                 runner.kill('SIGKILL');
             }, 5000);
 
@@ -128,22 +96,8 @@ async function runJava(userWrittenCode, sampleInputOutput, files) {
                 runner.stdin.end();
             }
 
-            runner.stdout.on('data', (d) => { 
-                if (stdoutBuffer.length + d.length > MAX_OUTPUT_BYTES) {
-                    executionError = "Output Limit Exceeded";
-                    runner.kill('SIGKILL');
-                } else {
-                    stdoutBuffer += d.toString(); 
-                }
-            });
-            runner.stderr.on('data', (d) => { 
-                if (stderrBuffer.length + d.length > MAX_OUTPUT_BYTES) {
-                    executionError = "Output Limit Exceeded";
-                    runner.kill('SIGKILL');
-                } else {
-                    stderrBuffer += d.toString(); 
-                }
-            });
+            runner.stdout.on('data', (d) => { stdoutBuffer += d.toString(); });
+            runner.stderr.on('data', (d) => { stderrBuffer += d.toString(); });
 
             runner.on('error', (err) => {
                 clearTimeout(timer);
@@ -153,11 +107,8 @@ async function runJava(userWrittenCode, sampleInputOutput, files) {
 
             runner.on('close', (code) => {
                 clearTimeout(timer);
-                if (code !== 0 && code !== 121 && !isTimeout && !executionError) {
+                if (code !== 0 && !isTimeout) {
                     executionError = `Process exited with code ${code}\n${stderrBuffer}`;
-                } else if (code === 121 && !isTimeout) {
-                    isTimeout = true;
-                    executionError = "Time Limit Exceeded (5000ms)";
                 }
                 resolve();
             });
@@ -171,9 +122,9 @@ async function runJava(userWrittenCode, sampleInputOutput, files) {
 
         results.push({
             run_success: testCasePassed,
-            run_error: obfuscatePaths(executionError || (testCasePassed ? "" : "Wrong Answer")),
-            stdout: obfuscatePaths(stdoutBuffer),
-            stderr: obfuscatePaths(stderrBuffer)
+            run_error: executionError || (testCasePassed ? "" : "Wrong Answer"),
+            stdout: stdoutBuffer,
+            stderr: stderrBuffer
         });
     }
 
