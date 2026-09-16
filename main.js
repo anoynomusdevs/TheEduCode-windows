@@ -2,7 +2,9 @@
 (function () {
     const fs = require('fs');
     const path = require('path');
-    const logFile = path.join(__dirname, 'app.log');
+    // const logFile = path.join(__dirname, 'app.log');
+    const { app } = require('electron');
+    const logFile = path.join(app.getPath('userData'), 'app.log');
 
     try {
         fs.writeFileSync(logFile, '', 'utf8'); // clear log file on launch
@@ -312,6 +314,8 @@ async function killKillerAndQuit() {
 }
 
 // Add these above app.whenReady()
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('no-sandbox');
 app.commandLine.appendSwitch('enable-webrtc');
 app.commandLine.appendSwitch('allow-http-screen-capture');
 app.commandLine.appendSwitch('ignore-certificate-errors');
@@ -320,6 +324,13 @@ app.commandLine.appendSwitch('enable-features', 'MediaRecorder,WebRtcHideLocalIp
 app.commandLine.appendSwitch('enable-usermedia-screen-capturing');
 app.commandLine.appendSwitch('enable-features', 'WebContentsForceEnable');
 app.setAppUserModelId('com.educode.browser');
+// Fix: Prevent GPU shader disk cache failures when elevated (admin) process
+// can't access cache files owned by the non-elevated user session.
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+
+app.on('gpu-process-gone', (event, details) => {
+    console.error('[WINDOW] GPU process gone:', details.reason, details.exitCode);
+});
 
 
 async function checkBluetooth() {
@@ -527,7 +538,7 @@ async function enableDebugPrivilegeForSelf() {
     // A same-user admin process can open another same-user admin process without SeDebugPrivilege;
     // SeDebugPrivilege is only required for cross-session / PPL / SYSTEM-owned processes.
     const script = `
-param([int]$Pid)
+param([int]$TargetProcessId)
 $src = @"
 using System;
 using System.Runtime.InteropServices;
@@ -560,11 +571,14 @@ public class PrivHelper {
 }
 "@
 Add-Type -TypeDefinition $src -ErrorAction Stop
-Write-Output ([PrivHelper]::Enable($Pid, "SeDebugPrivilege"))
-Write-Output ([PrivHelper]::Enable($Pid, "SeRestorePrivilege"))
-Write-Output ([PrivHelper]::Enable($Pid, "SeBackupPrivilege"))
-`;
+Write-Output ([PrivHelper]::Enable($TargetProcessId, "SeDebugPrivilege"))
+Write-Output ([PrivHelper]::Enable($TargetProcessId, "SeRestorePrivilege"))
+Write-Output ([PrivHelper]::Enable($TargetProcessId, "SeBackupPrivilege"))
 
+`;
+// Write-Output ([PrivHelper]::Enable($Pid, "SeDebugPrivilege"))
+// Write-Output ([PrivHelper]::Enable($Pid, "SeRestorePrivilege"))
+// Write-Output ([PrivHelper]::Enable($Pid, "SeBackupPrivilege"))
     try {
         fs.writeFileSync(tempScript, script, 'utf8');
     } catch (e) {
@@ -574,7 +588,8 @@ Write-Output ([PrivHelper]::Enable($Pid, "SeBackupPrivilege"))
 
     return new Promise((resolve) => {
         exec(
-            `${getPsCommand()} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tempScript}" -Pid ${pid}`,
+            // `${getPsCommand()} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tempScript}" -Pid ${pid}`,
+            `${getPsCommand()} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tempScript}" -TargetProcessId ${pid}`,
             { timeout: 15000 },
             (error, stdout, stderr) => {
                 // Clean up temp script
